@@ -1,5 +1,6 @@
 import os
 import re
+import random
 from pathlib import Path
 
 import requests
@@ -8,7 +9,7 @@ from google import genai
 
 
 # =========================================================
-# 1. READ PROFILE + CONFIG
+# FILES
 # =========================================================
 
 profile = Path("profile.md").read_text(encoding="utf-8")
@@ -16,57 +17,62 @@ config = Path("config.md").read_text(encoding="utf-8")
 
 
 # =========================================================
-# 2. GEMINI SETUP
+# GEMINI
 # =========================================================
 
 client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
-
 prompt = f"""
-You are my personal LinkedIn content assistant.
+You are a professional graphic designer's personal LinkedIn content assistant.
 
-IMPORTANT:
-- This is a PERSONAL LinkedIn profile, not a company page.
-- The person is a professional Graphic Designer.
-- Never mention or promote Red Line Arts unless explicitly requested.
-- Never invent clients, awards, qualifications, projects, results or experience.
-- Write in natural professional English.
-- Avoid generic motivational content and clickbait.
-- Create useful, practical and original graphic design content.
-- Prefer topics that are genuinely useful for graphic designers.
-- The content should feel written by an experienced human designer.
-
-MY PROFILE:
+PROFILE:
 {profile}
 
-BOT CONFIGURATION:
+CONFIGURATION:
 {config}
 
+IMPORTANT:
+- Personal LinkedIn profile.
+- Professional Graphic Designer.
+- Never invent clients, awards, projects, qualifications or results.
+- Never mention Red Line Arts unless explicitly requested.
+- Write natural professional English.
+- No generic motivational content.
+- No clickbait.
+- No fake personal stories.
+- Focus on practical graphic design knowledge.
+- The content should feel written by an experienced designer.
+
 TASK:
-Choose ONE strong and relevant graphic design topic that would be valuable
-for my LinkedIn audience.
+Choose ONE highly useful graphic design topic for today's LinkedIn post.
 
-Create:
+Return EXACTLY these sections:
 
-1. POST TITLE / TOPIC
-2. WHY THIS TOPIC
-3. LINKEDIN POST
-4. 5 RELEVANT HASHTAGS
-5. IMAGE CONCEPT
+TITLE:
+A short strong title, maximum 12 words.
 
-The LinkedIn post should sound like a real professional graphic designer,
-not like an AI or marketing agency.
+WHY:
+One short paragraph explaining why the topic matters.
 
-Keep the final post clear, useful, practical and engaging.
-Do not use unnecessary emojis.
+POST:
+A polished LinkedIn post, around 150-250 words.
+
+HASHTAGS:
+Exactly 5 relevant hashtags.
+
+IMAGE:
+Give a short visual direction for a professional LinkedIn graphic.
+Maximum 40 words.
+
+The visual should be educational/editorial, not a generic AI illustration.
 """
 
 
 # =========================================================
-# 3. GENERATE CONTENT
+# GENERATE CONTENT WITH FALLBACK MODELS
 # =========================================================
 
-models_to_try = [
+models = [
     "gemini-3.5-flash-lite",
     "gemini-3.6-flash",
     "gemini-3.5-flash",
@@ -74,79 +80,91 @@ models_to_try = [
 
 response = None
 
-for model_name in models_to_try:
+for model in models:
     try:
         response = client.models.generate_content(
-            model=model_name,
+            model=model,
             contents=prompt,
         )
-
-        print(f"Successfully used: {model_name}")
+        print(f"Gemini model used: {model}")
         break
-
     except Exception as e:
-        print(f"{model_name} failed: {e}")
+        print(f"{model} failed: {e}")
 
 
 if response is None:
-    raise RuntimeError("All Gemini models failed. Please try again later.")
+    raise RuntimeError("All Gemini models failed.")
 
 
-content = response.text
+content = response.text.strip()
 
-print("\n========== GENERATED CONTENT ==========\n")
+print("\n========== CONTENT ==========\n")
 print(content)
 
 
 # =========================================================
-# 4. EXTRACT TOPIC + IMAGE CONCEPT
+# SECTION EXTRACTOR
 # =========================================================
 
-def extract_section(text, section_number, next_section_number=None):
-    if next_section_number:
-        pattern = rf"{section_number}\.\s*.*?\n(.*?)(?=\n\s*{next_section_number}\.\s*)"
-    else:
-        pattern = rf"{section_number}\.\s*.*?\n(.*)$"
+def extract_section(name, text):
+    pattern = rf"{name}\s*:\s*(.*?)(?=\n(?:TITLE|WHY|POST|HASHTAGS|IMAGE)\s*:|\Z)"
 
-    match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
+    match = re.search(
+        pattern,
+        text,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
 
     if match:
-        value = match.group(1).strip()
-        value = re.sub(r"\*\*", "", value)
-        return value.strip()
+        return match.group(1).strip()
 
     return ""
 
 
-topic = extract_section(content, 1, 2)
-image_concept = extract_section(content, 5, None)
+title = extract_section("TITLE", content)
+why = extract_section("WHY", content)
+post = extract_section("POST", content)
+hashtags = extract_section("HASHTAGS", content)
+image_direction = extract_section("IMAGE", content)
 
+if not title:
+    title = "A Better Way to Think About Design"
 
-if not topic:
-    topic = "Graphic Design Insight"
-
-if not image_concept:
-    image_concept = "A clean professional graphic design concept."
+if not image_direction:
+    image_direction = "A clean editorial graphic explaining the main design principle."
 
 
 # =========================================================
-# 5. FONT SETUP
+# IMAGE HELPERS
 # =========================================================
+
+WIDTH = 1080
+HEIGHT = 1350
+
+BG = "#F4F1EA"
+BLACK = "#111111"
+WHITE = "#FFFFFF"
+GREY = "#77736D"
+LIGHT_GREY = "#DDD8CF"
+ACCENT = "#E4573D"
+BLUE = "#315CFF"
+
 
 FONT_REGULAR = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 FONT_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
 
-def get_font(size, bold=False):
+def font(size, bold=False):
     path = FONT_BOLD if bold else FONT_REGULAR
     return ImageFont.truetype(path, size)
 
 
-# =========================================================
-# 6. TEXT WRAPPING
-# =========================================================
+def text_width(draw, text, f):
+    box = draw.textbbox((0, 0), text, font=f)
+    return box[2] - box[0]
 
-def wrap_text(draw, text, font, max_width):
+
+def wrap(draw, text, f, max_width):
     words = text.split()
     lines = []
     current = ""
@@ -154,15 +172,11 @@ def wrap_text(draw, text, font, max_width):
     for word in words:
         test = word if not current else current + " " + word
 
-        bbox = draw.textbbox((0, 0), test, font=font)
-        width = bbox[2] - bbox[0]
-
-        if width <= max_width:
+        if text_width(draw, test, f) <= max_width:
             current = test
         else:
             if current:
                 lines.append(current)
-
             current = word
 
     if current:
@@ -171,235 +185,575 @@ def wrap_text(draw, text, font, max_width):
     return lines
 
 
-# =========================================================
-# 7. CREATE LINKEDIN IMAGE
-# =========================================================
+def rounded(draw, box, radius, fill, outline=None, width=1):
+    draw.rounded_rectangle(
+        box,
+        radius=radius,
+        fill=fill,
+        outline=outline,
+        width=width,
+    )
 
-def create_linkedin_image(topic, image_concept):
-    width = 1080
-    height = 1350
 
-    # Professional neutral background
-    background = "#F5F3EE"
-    dark = "#111111"
-    accent = "#E85D3F"
-    light_box = "#FFFFFF"
-    muted = "#686868"
-
-    image = Image.new("RGB", (width, height), background)
-    draw = ImageDraw.Draw(image)
-
-    # Fonts
-    small_font = get_font(25)
-    label_font = get_font(28, bold=True)
-    title_font = get_font(70, bold=True)
-    concept_font = get_font(32)
-    footer_font = get_font(24)
-
-    # -----------------------------------------------------
-    # TOP LABEL
-    # -----------------------------------------------------
+def draw_header(draw, label):
+    draw.text(
+        (70, 55),
+        "DESIGN NOTE",
+        font=font(25, True),
+        fill=ACCENT,
+    )
 
     draw.text(
-        (80, 75),
-        "GRAPHIC DESIGN • DESIGN INSIGHT",
-        font=label_font,
-        fill=accent,
+        (WIDTH - 310, 58),
+        label.upper(),
+        font=font(20),
+        fill=GREY,
     )
 
-    # -----------------------------------------------------
-    # TITLE
-    # -----------------------------------------------------
-
-    title_lines = wrap_text(
-        draw,
-        topic,
-        title_font,
-        900,
+    draw.line(
+        (70, 105, WIDTH - 70, 105),
+        fill=LIGHT_GREY,
+        width=2,
     )
+
+
+# =========================================================
+# LAYOUT 1 — EDITORIAL
+# =========================================================
+
+def layout_editorial(img, draw):
+    draw_header(draw, "Graphic Design")
+
+    title_font = font(72, True)
+
+    lines = wrap(draw, title, title_font, 900)
 
     y = 155
 
-    for line in title_lines[:4]:
+    for line in lines[:4]:
         draw.text(
-            (80, y),
+            (70, y),
             line,
             font=title_font,
-            fill=dark,
+            fill=BLACK,
         )
-        y += 85
+        y += 86
 
-    # -----------------------------------------------------
-    # MAIN VISUAL CARD
-    # -----------------------------------------------------
+    # Editorial visual
+    card_top = 520
 
-    card_top = max(y + 50, 480)
-    card_bottom = 1040
-
-    draw.rounded_rectangle(
-        (70, card_top, 1010, card_bottom),
-        radius=35,
-        fill=light_box,
-    )
-
-    # Left accent block
-    draw.rounded_rectangle(
-        (105, card_top + 45, 440, card_bottom - 45),
-        radius=25,
-        fill=dark,
-    )
-
-    draw.text(
-        (140, card_top + 90),
-        "DESIGN",
-        font=get_font(34, bold=True),
-        fill=background,
-    )
-
-    draw.text(
-        (140, card_top + 145),
-        "PRINCIPLE",
-        font=get_font(34, bold=True),
-        fill=accent,
-    )
-
-    # Simple editorial lines
-    line_y = card_top + 255
-
-    for i, length in enumerate([235, 190, 220, 155]):
-        draw.rounded_rectangle(
-            (
-                140,
-                line_y + i * 55,
-                140 + length,
-                line_y + i * 55 + 12,
-            ),
-            radius=6,
-            fill=background,
-        )
-
-    # -----------------------------------------------------
-    # RIGHT CONCEPT
-    # -----------------------------------------------------
-
-    concept_x = 500
-    concept_y = card_top + 70
-
-    draw.text(
-        (concept_x, concept_y),
-        "KEY IDEA",
-        font=get_font(26, bold=True),
-        fill=accent,
-    )
-
-    concept_lines = wrap_text(
+    rounded(
         draw,
-        image_concept,
-        concept_font,
-        440,
+        (70, card_top, 1010, 1035),
+        35,
+        WHITE,
     )
 
-    concept_y += 65
+    draw.text(
+        (110, card_top + 45),
+        "THE PRINCIPLE",
+        font=font(23, True),
+        fill=ACCENT,
+    )
 
-    for line in concept_lines[:8]:
+    concept_lines = wrap(
+        draw,
+        image_direction,
+        font(34, True),
+        820,
+    )
+
+    cy = card_top + 105
+
+    for line in concept_lines[:7]:
         draw.text(
-            (concept_x, concept_y),
+            (110, cy),
             line,
-            font=concept_font,
-            fill=dark,
+            font=font(34, True),
+            fill=BLACK,
         )
-        concept_y += 45
+        cy += 48
 
-    # -----------------------------------------------------
-    # SMALL VISUAL ELEMENTS
-    # -----------------------------------------------------
+    # Abstract typography
+    draw.text(
+        (110, 820),
+        "Aa",
+        font=font(150, True),
+        fill=BLACK,
+    )
 
-    circle_x = 850
-    circle_y = card_bottom - 120
+    draw.text(
+        (275, 850),
+        "TYPE",
+        font=font(35, True),
+        fill=ACCENT,
+    )
 
+    draw.line(
+        (110, 985, 930, 985),
+        fill=BLACK,
+        width=5,
+    )
+
+    draw.text(
+        (70, 1140),
+        "CLARITY  /  HIERARCHY  /  PURPOSE",
+        font=font(25, True),
+        fill=BLACK,
+    )
+
+
+# =========================================================
+# LAYOUT 2 — BEFORE / AFTER
+# =========================================================
+
+def layout_before_after(img, draw):
+    draw_header(draw, "Before / After")
+
+    draw.text(
+        (70, 150),
+        title,
+        font=font(62, True),
+        fill=BLACK,
+    )
+
+    # BEFORE
+    rounded(
+        draw,
+        (70, 290, 505, 920),
+        30,
+        WHITE,
+    )
+
+    draw.text(
+        (105, 330),
+        "BEFORE",
+        font=font(25, True),
+        fill=ACCENT,
+    )
+
+    # cluttered visual
+    sizes = [42, 30, 55, 28, 45, 34]
+
+    y = 430
+
+    for i, size in enumerate(sizes):
+        txt = ["Aa", "TYPE", "BRAND", "DESIGN", "IDEA", "VISUAL"][i]
+
+        draw.text(
+            (105 + (i % 2) * 100, y),
+            txt,
+            font=font(size, True),
+            fill=BLACK,
+        )
+
+        y += 70
+
+    draw.text(
+        (105, 850),
+        "Too much competing",
+        font=font(24),
+        fill=GREY,
+    )
+
+    # AFTER
+    rounded(
+        draw,
+        (575, 290, 1010, 920),
+        30,
+        BLACK,
+    )
+
+    draw.text(
+        (610, 330),
+        "AFTER",
+        font=font(25, True),
+        fill=ACCENT,
+    )
+
+    draw.text(
+        (610, 470),
+        "Aa",
+        font=font(120, True),
+        fill=WHITE,
+    )
+
+    draw.text(
+        (610, 650),
+        "Clear",
+        font=font(55, True),
+        fill=WHITE,
+    )
+
+    draw.text(
+        (610, 720),
+        "Hierarchy",
+        font=font(55, True),
+        fill=ACCENT,
+    )
+
+    draw.text(
+        (610, 850),
+        "One clear visual priority",
+        font=font(24),
+        fill=LIGHT_GREY,
+    )
+
+    draw.text(
+        (70, 1010),
+        "GOOD DESIGN REDUCES VISUAL NOISE.",
+        font=font(34, True),
+        fill=BLACK,
+    )
+
+    draw.text(
+        (70, 1080),
+        "The goal is not to add more. It's to communicate better.",
+        font=font(27),
+        fill=GREY,
+    )
+
+
+# =========================================================
+# LAYOUT 3 — CHECKLIST
+# =========================================================
+
+def layout_checklist(img, draw):
+    draw_header(draw, "Design Checklist")
+
+    title_font = font(65, True)
+
+    lines = wrap(draw, title, title_font, 900)
+
+    y = 150
+
+    for line in lines[:3]:
+        draw.text(
+            (70, y),
+            line,
+            font=title_font,
+            fill=BLACK,
+        )
+        y += 78
+
+    items = [
+        "Clear visual hierarchy",
+        "Consistent spacing",
+        "Controlled typography",
+        "Strong contrast",
+        "One clear message",
+    ]
+
+    start_y = 480
+
+    for i, item in enumerate(items, 1):
+        yy = start_y + (i - 1) * 125
+
+        draw.ellipse(
+            (75, yy, 125, yy + 50),
+            fill=ACCENT,
+        )
+
+        draw.text(
+            (91, yy + 5),
+            str(i),
+            font=font(24, True),
+            fill=WHITE,
+        )
+
+        draw.text(
+            (155, yy - 2),
+            item,
+            font=font(34, True),
+            fill=BLACK,
+        )
+
+        draw.line(
+            (155, yy + 55, 960, yy + 55),
+            fill=LIGHT_GREY,
+            width=2,
+        )
+
+    draw.text(
+        (70, 1120),
+        "SAVE THIS FOR YOUR NEXT DESIGN PROJECT.",
+        font=font(27, True),
+        fill=ACCENT,
+    )
+
+
+# =========================================================
+# LAYOUT 4 — PROCESS
+# =========================================================
+
+def layout_process(img, draw):
+    draw_header(draw, "Design Process")
+
+    draw.text(
+        (70, 150),
+        title,
+        font=font(64, True),
+        fill=BLACK,
+    )
+
+    steps = [
+        ("01", "DEFINE", "Understand the goal"),
+        ("02", "STRUCTURE", "Build the hierarchy"),
+        ("03", "DESIGN", "Create the visual system"),
+        ("04", "REFINE", "Remove what is unnecessary"),
+    ]
+
+    y = 390
+
+    for number, heading, description in steps:
+        draw.text(
+            (70, y),
+            number,
+            font=font(50, True),
+            fill=ACCENT,
+        )
+
+        draw.text(
+            (190, y),
+            heading,
+            font=font(34, True),
+            fill=BLACK,
+        )
+
+        draw.text(
+            (190, y + 50),
+            description,
+            font=font(26),
+            fill=GREY,
+        )
+
+        draw.line(
+            (190, y + 100, 970, y + 100),
+            fill=LIGHT_GREY,
+            width=2,
+        )
+
+        y += 185
+
+    draw.text(
+        (70, 1150),
+        "DESIGN IS A PROCESS OF MAKING DECISIONS.",
+        font=font(29, True),
+        fill=BLACK,
+    )
+
+
+# =========================================================
+# LAYOUT 5 — BIG STATEMENT
+# =========================================================
+
+def layout_statement(img, draw):
+    draw_header(draw, "Design Principle")
+
+    # large accent circle
     draw.ellipse(
-        (
-            circle_x - 45,
-            circle_y - 45,
-            circle_x + 45,
-            circle_y + 45,
-        ),
-        fill=accent,
-    )
-
-    draw.rectangle(
-        (
-            circle_x - 15,
-            circle_y - 15,
-            circle_x + 15,
-            circle_y + 15,
-        ),
-        fill=background,
-    )
-
-    # -----------------------------------------------------
-    # FOOTER
-    # -----------------------------------------------------
-
-    draw.text(
-        (80, 1130),
-        "CLARITY • HIERARCHY • PURPOSE",
-        font=label_font,
-        fill=dark,
+        (710, 190, 960, 440),
+        fill=ACCENT,
     )
 
     draw.text(
-        (80, 1195),
-        "A practical design perspective for better visual communication.",
-        font=small_font,
-        fill=muted,
+        (775, 245),
+        "01",
+        font=font(70, True),
+        fill=WHITE,
     )
+
+    title_font = font(75, True)
+
+    lines = wrap(
+        draw,
+        title,
+        title_font,
+        850,
+    )
+
+    y = 220
+
+    for line in lines[:5]:
+        draw.text(
+            (70, y),
+            line,
+            font=title_font,
+            fill=BLACK,
+        )
+        y += 90
+
+    rounded(
+        draw,
+        (70, 760, 1010, 1030),
+        30,
+        BLACK,
+    )
+
+    concept_lines = wrap(
+        draw,
+        image_direction,
+        font(32),
+        820,
+    )
+
+    y = 825
+
+    for line in concept_lines[:5]:
+        draw.text(
+            (110, y),
+            line,
+            font=font(32),
+            fill=WHITE,
+        )
+        y += 48
 
     draw.text(
-        (80, 1270),
-        "LinkedIn Design Insight",
-        font=footer_font,
-        fill=muted,
+        (70, 1130),
+        "A DESIGNER'S JOB IS TO MAKE THE MESSAGE CLEAR.",
+        font=font(27, True),
+        fill=ACCENT,
     )
 
-    output_file = "linkedin_image.png"
-    image.save(output_file, "PNG", optimize=True)
 
-    return output_file
+# =========================================================
+# SMART LAYOUT SELECTION
+# =========================================================
+
+def choose_layout():
+    text = (
+        title + " " +
+        image_direction + " " +
+        post
+    ).lower()
+
+    if any(word in text for word in [
+        "before",
+        "after",
+        "mistake",
+        "wrong",
+        "improve",
+        "weak",
+        "better",
+        "bad design",
+    ]):
+        return "before_after"
+
+    if any(word in text for word in [
+        "steps",
+        "process",
+        "workflow",
+        "how to",
+        "approach",
+        "method",
+    ]):
+        return "process"
+
+    if any(word in text for word in [
+        "checklist",
+        "mistakes",
+        "rules",
+        "tips",
+        "principles",
+        "things",
+    ]):
+        return "checklist"
+
+    if any(word in text for word in [
+        "type",
+        "font",
+        "typography",
+        "logo",
+        "branding",
+        "identity",
+    ]):
+        return "editorial"
+
+    return "statement"
 
 
 # =========================================================
-# 8. GENERATE IMAGE
+# CREATE IMAGE
 # =========================================================
 
-image_file = create_linkedin_image(
-    topic,
-    image_concept,
-)
+def create_image():
+    img = Image.new(
+        "RGB",
+        (WIDTH, HEIGHT),
+        BG,
+    )
 
-print(f"\nImage created: {image_file}")
+    draw = ImageDraw.Draw(img)
+
+    layout = choose_layout()
+
+    print(f"Selected visual layout: {layout}")
+
+    if layout == "before_after":
+        layout_before_after(img, draw)
+
+    elif layout == "checklist":
+        layout_checklist(img, draw)
+
+    elif layout == "process":
+        layout_process(img, draw)
+
+    elif layout == "editorial":
+        layout_editorial(img, draw)
+
+    else:
+        layout_statement(img, draw)
+
+    # Small brand-free footer
+    draw.text(
+        (WIDTH - 270, HEIGHT - 55),
+        "DESIGN INSIGHT",
+        font=font(18, True),
+        fill=GREY,
+    )
+
+    filename = "linkedin_image.png"
+
+    img.save(
+        filename,
+        "PNG",
+        optimize=True,
+    )
+
+    return filename
 
 
 # =========================================================
-# 9. TELEGRAM SETUP
+# GENERATE IMAGE
+# =========================================================
+
+image_file = create_image()
+
+print(f"Image generated: {image_file}")
+
+
+# =========================================================
+# TELEGRAM
 # =========================================================
 
 telegram_token = os.environ["TELEGRAM_BOT_TOKEN"]
 telegram_chat_id = os.environ["TELEGRAM_CHAT_ID"]
 
-telegram_base = f"https://api.telegram.org/bot{telegram_token}"
+telegram_base = (
+    f"https://api.telegram.org/bot{telegram_token}"
+)
 
 
 # =========================================================
-# 10. SEND IMAGE TO TELEGRAM
+# SEND IMAGE
 # =========================================================
 
 with open(image_file, "rb") as photo:
-    photo_result = requests.post(
+    result = requests.post(
         f"{telegram_base}/sendPhoto",
         data={
             "chat_id": telegram_chat_id,
-            "caption": "🖼️ LinkedIn image ready",
+            "caption": "🖼️ PRO LinkedIn visual ready",
         },
         files={
             "photo": photo,
@@ -407,27 +761,38 @@ with open(image_file, "rb") as photo:
         timeout=60,
     )
 
-photo_result.raise_for_status()
+result.raise_for_status()
 
-print("Successfully sent image to Telegram.")
+print("Image sent to Telegram.")
 
 
 # =========================================================
-# 11. SEND FULL LINKEDIN CONTENT
+# SEND CAPTION
 # =========================================================
 
-message = f"""🤖 LinkedIn Content Ready
+telegram_message = f"""🤖 LINKEDIN CONTENT READY
 
-{content}
+TITLE:
+{title}
+
+WHY:
+{why}
+
+POST:
+{post}
+
+HASHTAGS:
+{hashtags}
+
+IMAGE CONCEPT:
+{image_direction}
 """
 
 
-# Telegram messages have a size limit, so split if necessary.
-max_length = 4000
-
+# Telegram safe chunks
 chunks = [
-    message[i:i + max_length]
-    for i in range(0, len(message), max_length)
+    telegram_message[i:i + 4000]
+    for i in range(0, len(telegram_message), 4000)
 ]
 
 
@@ -444,5 +809,5 @@ for chunk in chunks:
     result.raise_for_status()
 
 
-print("Successfully sent LinkedIn content to Telegram.")
-print("DONE.")
+print("LinkedIn caption sent to Telegram.")
+print("========== DONE ==========")
