@@ -1,13 +1,13 @@
 import os
 from pathlib import Path
 from google import genai
-from google.genai import types
+import requests
 
-# Load your personal LinkedIn profile and bot configuration
+# Load profile and bot configuration
 profile = Path("profile.md").read_text(encoding="utf-8")
 config = Path("config.md").read_text(encoding="utf-8")
 
-# Gemini API key comes securely from GitHub Secrets
+# Gemini
 client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
 
 prompt = f"""
@@ -21,7 +21,7 @@ IMPORTANT:
 - Write in natural professional English.
 - Avoid generic motivational content and clickbait.
 - Create useful, practical, original design content.
-- Prefer topics that are currently relevant to graphic designers.
+- Prefer relevant topics for graphic designers.
 
 MY PROFILE:
 {profile}
@@ -30,10 +30,10 @@ BOT CONFIGURATION:
 {config}
 
 TASK:
-Choose ONE strong and relevant graphic design topic that would be valuable for my LinkedIn audience.
-Choose ONE strong topic that would be valuable for my LinkedIn audience.
+Choose ONE strong and relevant graphic design topic that would be valuable
+for my LinkedIn audience.
 
-Then create:
+Create:
 
 1. POST TITLE / TOPIC
 2. WHY THIS TOPIC
@@ -47,6 +47,7 @@ not like an AI or marketing agency.
 Keep the final post clear, useful and engaging without unnecessary emojis.
 """
 
+# Try multiple Gemini models
 models_to_try = [
     "gemini-3.5-flash-lite",
     "gemini-3.6-flash",
@@ -69,4 +70,30 @@ for model_name in models_to_try:
 if response is None:
     raise RuntimeError("All Gemini models failed. Please try again later.")
 
-print(response.text)
+content = response.text
+
+print(content)
+
+# Send the generated content to Telegram
+telegram_token = os.environ["TELEGRAM_BOT_TOKEN"]
+telegram_chat_id = os.environ["TELEGRAM_CHAT_ID"]
+
+telegram_url = f"https://api.telegram.org/bot{telegram_token}/sendMessage"
+
+message = f"""🤖 LinkedIn Content Ready
+
+{content}
+"""
+
+result = requests.post(
+    telegram_url,
+    data={
+        "chat_id": telegram_chat_id,
+        "text": message,
+    },
+    timeout=30,
+)
+
+result.raise_for_status()
+
+print("Successfully sent to Telegram.")
