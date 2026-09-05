@@ -30,7 +30,7 @@ BOT CONFIGURATION:
 {config}
 
 TASK:
-Research current/relevant graphic design topics using Google Search.
+Choose ONE strong and relevant graphic design topic that would be valuable for my LinkedIn audience.
 Choose ONE strong topic that would be valuable for my LinkedIn audience.
 
 Then create:
@@ -47,11 +47,26 @@ not like an AI or marketing agency.
 Keep the final post clear, useful and engaging without unnecessary emojis.
 """
 
-response = client.models.generate_content(
-    model="gemini-3.6-flash",
-    contents=prompt,
-    config=types.GenerateContentConfig(
-    ),
-)
+models_to_try = [
+    "gemini-3.5-flash-lite",
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+]
+
+response = None
+
+for model_name in models_to_try:
+    try:
+        response = client.models.generate_content(
+            model=model_name,
+            contents=prompt,
+        )
+        print(f"Successfully used: {model_name}")
+        break
+    except Exception as e:
+        print(f"{model_name} failed: {e}")
+
+if response is None:
+    raise RuntimeError("All Gemini models failed. Please try again later.")
 
 print(response.text)
